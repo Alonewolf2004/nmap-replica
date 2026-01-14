@@ -25,7 +25,7 @@ A high-performance, asynchronous port scanner written in Python, designed to rep
 
 1.  **Clone the repository**:
     ```bash
-    git clone https://github.com/yourusername/argus.git
+    git clone https://github.com/Alonewolf2004/ARGUS.git
     cd argus
     ```
 

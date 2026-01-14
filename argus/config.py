@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field, validator
 
 class ScanConfig(BaseModel):
@@ -10,6 +10,7 @@ class ScanConfig(BaseModel):
     ports: List[int] = Field(..., min_items=1)
     timeout: float = Field(1.5, gt=0, le=10.0)
     concurrency: int = Field(500, ge=1, le=5000)
+    output_file: Optional[str] = None
 
     @validator('ports')
     def validate_ports(cls, v):

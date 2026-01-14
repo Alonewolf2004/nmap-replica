@@ -1,6 +1,54 @@
 import re
-from typing import List, Set
+import time
+import asyncio
+from typing import List, Set, Tuple, Optional
 from hashlib import sha256
+
+class RateLimiter:
+    """
+    Token Bucket Rate Limiter to be a good network citizen.
+    """
+    def __init__(self, max_per_second=100):
+        self.tokens = max_per_second
+        self.max = max_per_second
+        self.last_update = time.time()
+        self._lock = asyncio.Lock()
+    
+    async def acquire(self):
+        async with self._lock:
+            while self.tokens < 1:
+                now = time.time()
+                elapsed = now - self.last_update
+                refill = elapsed * self.max
+                if refill > 0:
+                     self.tokens = min(self.max, self.tokens + refill)
+                     self.last_update = now
+                
+                if self.tokens < 1:
+                    await asyncio.sleep(0.1)
+            
+            self.tokens -= 1
+
+class ResultCache:
+    """
+    Simple in-memory TTL cache for scan results.
+    """
+    def __init__(self, ttl=300):
+        self.cache = {}
+        self.ttl = ttl
+    
+    def get(self, ip, port):
+        key = f"{ip}:{port}"
+        if key in self.cache:
+            timestamp, result = self.cache[key]
+            if time.time() - timestamp < self.ttl:
+                return result
+            else:
+                del self.cache[key]
+        return None
+    
+    def set(self, ip, port, result):
+        self.cache[f"{ip}:{port}"] = (time.time(), result)
 
 class BloomFilter:
     """

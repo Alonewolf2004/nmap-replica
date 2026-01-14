@@ -8,7 +8,7 @@ from rich.progress import Progress
 
 from .analyzer import BannerAnalyzer
 from .ui import ScannerUI
-from .utils import BloomFilter
+from .utils import BloomFilter, RateLimiter, ResultCache
 
 class PortScanner:
     # Priority Map: Lower number = Higher Priority (Scanned First)
@@ -18,138 +18,164 @@ class PortScanner:
         25: 3, 53: 3, 110: 3, 143: 3,    # Infra
         3306: 3, 5432: 3, 6379: 3, 1433: 3 # DB
     }
-    def __init__(self, target_ip: str, ports: List[int], timeout: float = 1.5, concurrency: int = 100):
+    def __init__(self, target_ip: str, ports: List[int], timeout: float = 1.5, concurrency: int = 100, output_file: str = None):
         self.target_ip = target_ip
         self.ports = ports
         self.timeout = timeout
         self.concurrency = concurrency
-        self.results: List[Dict] = []
+        self.output_file = output_file
+        self.results = {}
         self.open_ports_count = 0
         self.closed_ports_count = 0
         self.filtered_ports_count = 0
         self.ui = ScannerUI()
+        self.scan_start_time = 0
+        
+        # New Optimizations
+        self.cache = ResultCache(ttl=300)
+        self.limiter = RateLimiter(max_per_second=concurrency * 2) # Allow burst
+        self.measured_rtt = None
 
-    async def scan_port(self, port: int, progress_task_id, progress_instance: Progress) -> None:
+    async def _probe_rtt(self):
         """
-        Scans a single port asynchronously with refined FTP reliability logic.
+        Adaptive Timeout: Measure RTT to target to adjust timeout dynamically.
         """
-        # CRITICAL SAFEGUARD: Never scan outside 1-65535
-        if not (1 <= port <= 65535):
+        start = time.time()
+        try:
+            conn = asyncio.open_connection(self.target_ip, 80)
+            reader, writer = await asyncio.wait_for(conn, timeout=2.0)
+            writer.close()
+            try: await writer.wait_closed()
+            except: pass
+            self.measured_rtt = time.time() - start
+        except Exception as e:
+            # Fallback if port 80 is closed or filtered
+            self.measured_rtt = None
+            # print(f"RTT Probe Failed: {e}") 
+            self.measured_rtt = None
+
+    async def scan_port(self, port: int, progress_instance: Progress, progress_task_id: int):
+        # 1. Check Cache
+        cached = self.cache.get(self.target_ip, port)
+        if cached:
+            if cached.get('status') == 'open':
+                self.open_ports_count += 1
+                self.results[port] = cached
+            elif cached.get('status') == 'closed':
+               self.closed_ports_count += 1
+            else:
+               self.filtered_ports_count += 1
+            progress_instance.advance(progress_task_id)
             return
 
-        res = {"port": port, "status": "closed", "service": None, "banner": None, "os_guess": None}
-        
-        try:
-            # Check if port needs SSL
-            use_ssl = port in [443, 465, 993, 995, 8443]
-            
-            conn = asyncio.open_connection(self.target_ip, port, ssl=use_ssl if use_ssl else None)
-            
-            # 3-Way Handshake
-            try:
-                reader, writer = await asyncio.wait_for(conn, timeout=self.timeout)
-            except asyncio.TimeoutError:
-                # Timeout = Packet dropped = FILTERED
-                self.filtered_ports_count += 1
-                progress_instance.advance(progress_task_id)
-                return
-            except ConnectionRefusedError:
-                # RST received = Port alive but invalid = CLOSED
-                self.closed_ports_count += 1
-                progress_instance.advance(progress_task_id)
-                return
-            except OSError:
-                # Other network reachability errors usually mean FILTERED
-                self.filtered_ports_count += 1
-                progress_instance.advance(progress_task_id)
-                return
-            except Exception:
-                # Catch-all for other async/ssl weirdness
-                self.closed_ports_count += 1
-                progress_instance.advance(progress_task_id)
-                return
+        # 2. Rate Limit
+        await self.limiter.acquire()
 
-            # If we are here, handshake completed = OPEN
-            res["status"] = "open"
-            self.open_ports_count += 1
+        # 3. Calculated Timeout (Relaxed for Reliability)
+        # RTT * 5 + 1.0s buffer. 
+        # Minimum 2.0s to account for OS overhead/queuing on public internet.
+        base_timeout = max(2.0, (self.measured_rtt * 5) + 1.0) if self.measured_rtt else self.timeout
+        
+        # 4. Retry Logic
+        retries = 2
+        last_exception = None
+        
+        for attempt in range(retries):
+            # Increase timeout on retry
+            current_timeout = base_timeout * (1.5 ** attempt)
             
             try:
-                # 1. Passive Read
-                # FTP Fix: Port 21 needs more time for the 220 Greeting.
-                # If we read too fast, we get empty data.
-                initial_read_timeout = 2.0 if port == 21 else 0.5
-                
-                initial_data = b""
+                conn = asyncio.open_connection(self.target_ip, port)
                 try:
-                    initial_data = await asyncio.wait_for(reader.read(2048), timeout=initial_read_timeout)
-                except asyncio.TimeoutError:
-                    pass
+                    reader, writer = await asyncio.wait_for(conn, timeout=current_timeout)
+                except asyncio.TimeoutError as e:
+                    last_exception = e
+                    continue # Retry
+                except ConnectionRefusedError as e:
+                    # Debug: Why is this happening?
+                    if attempt == 0:
+                        # Retry once for RST, just in case
+                        last_exception = e
+                        await asyncio.sleep(0.2) # Backoff slightly
+                        continue
+                    
+                    self.closed_ports_count += 1
+                    self.cache.set(self.target_ip, port, {'status': 'closed'})
+                    progress_instance.advance(progress_task_id)
+                    return
+                except OSError as e:
+                    # Network unreach/host down?
+                    last_exception = e
+                    continue # Possible transient issue
+                except Exception as e:
+                    last_exception = e
+                    break 
+
+                # If we get here, connection is OPEN
+                self.open_ports_count += 1
                 
-                # FTP Retry: If port 21 and still empty, try one more time
-                if port == 21 and not initial_data:
+                # --- BANNER GRABBING ---
+                banner_text = ""
+                try:
+                    # 1. Passive Read (First Attempt)
+                    # Many protocols (SSH, FTP, SMTP, MySQL) send a greeting immediately.
+                    # We wait briefly (0.8s) for this greeting.
                     try:
-                        # Small wait to see if laggy server sends greeting
-                        await asyncio.sleep(0.5)
-                        initial_data = await asyncio.wait_for(reader.read(2048), timeout=1.0)
+                        raw_data = await asyncio.wait_for(reader.read(2048), timeout=0.8)
+                        if raw_data:
+                            banner_text = raw_data.decode('utf-8', errors='ignore').strip()
                     except asyncio.TimeoutError:
-                        pass
+                        pass # No greeting, might need a probe.
 
-                # 2. Active Probing (If no data or generic data)
-                probe, is_binary_probe = BannerAnalyzer.get_probe(port, self.target_ip)
-                
-                # If we have no data, OR if it's HTTP (where we want to probe regardless of initial connection)
-                if probe and (not initial_data or port in [80, 443, 8080]):
-                     writer.write(probe)
-                     await writer.drain()
-                     
-                     try:
-                        probe_data = await asyncio.wait_for(reader.read(4096), timeout=1.5)
-                        initial_data += probe_data
-                     except asyncio.TimeoutError:
-                        pass
-                
-                if initial_data:
-                    # Specialized parser for HTTP
-                    if port in [80, 443, 8080, 8000, 8443]:
-                        banner_text, service_hint = BannerAnalyzer.parse_http_response(initial_data)
-                        res["banner"] = banner_text
-                        if service_hint: res["service"] = service_hint
-                    else:
-                        try:
-                            banner_text = initial_data.decode('utf-8', errors='ignore').strip()
-                        except:
-                            banner_text = str(initial_data)
-                        res["banner"] = banner_text
-                    
-                    # Heuristic Analysis
-                    detected_service, detected_os = BannerAnalyzer.analyze_banner(res["banner"] or "", port)
-                    
-                    if not res["service"] or res["service"] == "Unknown":
-                        res["service"] = detected_service
-                    res["os_guess"] = detected_os
-                
-            except (asyncio.TimeoutError, ConnectionResetError, OSError):
-                pass 
-            except Exception as e:
-                 res["error"] = str(e)
-
-            finally:
-                writer.close()
-                try:
-                    await writer.wait_closed()
-                except:
+                    # 2. Active Probe (If no banner yet)
+                    if not banner_text:
+                        probe_data, is_binary = BannerAnalyzer.get_probe(port, self.target_ip)
+                        if probe_data:
+                            writer.write(probe_data)
+                            await writer.drain()
+                            
+                            # Read Response to Probe
+                            try:
+                                raw_data = await asyncio.wait_for(reader.read(2048), timeout=2.0)
+                                if raw_data:
+                                    # Append or set
+                                    banner_text = raw_data.decode('utf-8', errors='ignore').strip()
+                            except asyncio.TimeoutError:
+                                pass
+                except Exception:
                     pass
+                finally:
+                    writer.close()
+                    try: await writer.wait_closed()
+                    except: pass
 
-        except Exception:
-             pass
-        
-        # Fallback service identification
-        if res["status"] == "open" and not res["service"]:
-             res["service"] = BannerAnalyzer.get_common_service_name(port)
+                # 4. Analyze Service
+                service, os_guess = BannerAnalyzer.analyze_banner(banner_text, port)
+                
+                res = {
+                    "port": port,
+                    "status": "open",
+                    "service": service,
+                    "banner": banner_text[:50],
+                    "os_guess": os_guess
+                }
+                
+                self.results[port] = res
+                self.cache.set(self.target_ip, port, res)
+                progress_instance.advance(progress_task_id)
+                return # Successful scan
 
-        if res["status"] == "open":
-             self.results.append(res)
+            except Exception:
+                 pass
         
+        # If exhausted retries
+        if isinstance(last_exception, (asyncio.TimeoutError, OSError)):
+             self.filtered_ports_count += 1
+             self.cache.set(self.target_ip, port, {'status': 'filtered'})
+        else:
+             self.closed_ports_count += 1
+             self.cache.set(self.target_ip, port, {'status': 'closed'})
+             
         progress_instance.advance(progress_task_id)
 
     def _prioritize_ports(self) -> Generator[int, None, None]:
@@ -174,6 +200,12 @@ class PortScanner:
         
         start_time = time.time()
         
+        # Measure RTT for Adaptive Timeout
+        await self._probe_rtt()
+        if self.measured_rtt:
+             rtt_ms = self.measured_rtt * 1000
+             self.ui.console.print(f"[dim]Adaptive Timeout Enabled: RTT {rtt_ms:.2f}ms[/dim]")
+
         # O(N) Memory Optimization: use a bounded queue instead of creating all tasks at once
         queue = asyncio.Queue(maxsize=self.concurrency * 2)
 
@@ -204,7 +236,7 @@ class PortScanner:
                         break
                     
                     # We don't need a semaphore here because the number of consumers IS the concurrency limit
-                    await self.scan_port(port, task_id, progress)
+                    await self.scan_port(port, progress, task_id)
                     queue.task_done()
 
             # Start Producer
@@ -226,7 +258,7 @@ class PortScanner:
         self.ui.display_results(
             self.target_ip, 
             duration, 
-            self.results, 
+            list(self.results.values()), 
             final_os, 
             self.closed_ports_count, 
             self.filtered_ports_count
@@ -239,7 +271,7 @@ class PortScanner:
         """
         final_os = "Unknown"
         # 1. Look for high confidence hints
-        for res in self.results:
+        for res in self.results.values():
             os_hint = res.get("os_guess")
             if os_hint and os_hint != "Unknown":
                 if "Linux" in os_hint or "Windows" in os_hint or "FreeBSD" in os_hint:
@@ -247,18 +279,22 @@ class PortScanner:
                     break 
         
         # 2. Backfill details
-        for res in self.results:
+        for res in self.results.values():
             if res["os_guess"] == "Unknown":
                  res["os_guess"] = final_os
         return final_os
 
     def save_results(self, final_os: str):
-        filename = f"scan_results_{self.target_ip.replace('.', '_')}.json"
+        if self.output_file:
+            filename = self.output_file
+        else:
+            filename = f"scan_results_{self.target_ip.replace('.', '_')}.json"
+            
         data = {
             "target": self.target_ip,
             "timestamp": datetime.now().isoformat(),
             "os_detected": final_os,
-            "results": self.results
+            "results": list(self.results.values())
         }
         with open(filename, "w") as f:
             json.dump(data, f, indent=4)

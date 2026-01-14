@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import socket
 import sys
@@ -8,38 +9,64 @@ from .utils import parse_ports
 from .config import ScanConfig
 
 def main():
+    # 1. CLI Argument Parsing
+    parser = argparse.ArgumentParser(description="Argus - The All-Seeing Port Scanner")
+    parser.add_argument("-t", "--target", help="Target IP or Hostname")
+    parser.add_argument("-p", "--ports", help="Ports to scan (e.g. 80,443,1-1000)")
+    parser.add_argument("-c", "--concurrency", type=int, default=500, help="Concurrent tasks (Default: 500)")
+    parser.add_argument("-o", "--output", help="Output JSON file path")
+    
+    args = parser.parse_args()
+    
     ui = ScannerUI()
-    ui.display_welcome()
+    if not args.target:
+        ui.display_welcome()
     
     try:
-        # 1. Get Inputs
-        target = ui.get_target()
+        # 2. Input Resolution (CLI vs Interactive)
         
-        # Resolve hostname first (Validation requires valid IP/Host)
+        # Target
+        if args.target:
+            target = args.target
+        else:
+            target = ui.get_target()
+            
         try:
            target_ip = socket.gethostbyname(target)
+           if args.target:
+               ui.console.print(f"[green]Resolved {target} to {target_ip}[/green]")
         except socket.gaierror:
            ui.console.print(f"[bold red]Error:[/bold red] Could not resolve hostname {target}")
            return
 
-        ports_str = ui.get_ports()
+        # Ports
+        if args.ports:
+            ports_str = args.ports
+        else:
+            ports_str = ui.get_ports()
         raw_ports = parse_ports(ports_str)
         
-        concurrency = ui.get_speed()
+        # Concurrency
+        if args.concurrency and args.concurrency != 500:
+            # If user manually set flag, use it
+            concurrency = args.concurrency
+        elif args.target:
+             # If running in CLI mode but no speed set, default to 500 without prompting
+             concurrency = 500
+        else:
+             # Interactive mode
+             concurrency = ui.get_speed()
         
-        # 2. Validate with Pydantic
-        # This will raise ValidationError if constraints fail
+        # 3. Validate with Pydantic
         config = ScanConfig(
             target_ip=target_ip,
             ports=raw_ports,
-            concurrency=concurrency
+            concurrency=concurrency,
+            output_file=args.output
         )
         
-        # 3. Initialize Scanner with Validated Config
-        # **config.dict() unpacks keys: target_ip, ports, concurrency, timeout
+        # 4. Initialize & Run
         scanner = PortScanner(**config.dict())
-        
-        # 4. Run Async Loop
         asyncio.run(scanner.run())
         
     except KeyboardInterrupt:

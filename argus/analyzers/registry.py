@@ -3,13 +3,15 @@ from .base import ServiceAnalyzer
 from .http import HTTPAnalyzer
 from .ssh import SSHAnalyzer
 from .database import DatabaseAnalyzer
+from .generic import GenericProtocolAnalyzer
 
 class AnalyzerRegistry:
     def __init__(self):
         self.analyzers: List[ServiceAnalyzer] = [
             HTTPAnalyzer(),
             SSHAnalyzer(),
-            DatabaseAnalyzer()
+            DatabaseAnalyzer(),
+            GenericProtocolAnalyzer()  # Handles FTP, RTSP, SMTP, etc.
         ]
     
     def analyze(self, port: int, banner: str, trie_tag: str = None) -> Tuple[str, str]:

@@ -15,6 +15,8 @@ def main():
     parser.add_argument("-p", "--ports", help="Ports to scan (e.g. 80,443,1-1000)")
     parser.add_argument("-c", "--concurrency", type=int, default=500, help="Concurrent tasks (Default: 500)")
     parser.add_argument("-o", "--output", help="Output JSON file path")
+    parser.add_argument("-sV", "--service-version", action="store_true", 
+                        help="Deep service detection with multi-stage probing")
     
     args = parser.parse_args()
     
@@ -60,9 +62,11 @@ def main():
         # 3. Validate with Pydantic
         config = ScanConfig(
             target_ip=target_ip,
+            hostname=target,  # Original hostname for SNI
             ports=raw_ports,
             concurrency=concurrency,
-            output_file=args.output
+            output_file=args.output,
+            deep_scan=args.service_version  # -sV flag
         )
         
         # 4. Initialize & Run

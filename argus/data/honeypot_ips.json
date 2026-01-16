@@ -1,0 +1,34 @@
+{
+    "description": "Known honeypot IP ranges and cloud provider ranges often used for honeypots",
+    "version": "1.0.0",
+    "last_updated": "2026-01-16",
+    "ranges": [
+        {
+            "cidr": "45.33.32.0/24",
+            "name": "Shodan Honeypot Network",
+            "score": 50,
+            "source": "community"
+        },
+        {
+            "cidr": "198.51.100.0/24",
+            "name": "TEST-NET-2 (Often used for honeypots)",
+            "score": 30,
+            "source": "rfc5737"
+        },
+        {
+            "cidr": "203.0.113.0/24",
+            "name": "TEST-NET-3 (Documentation range)",
+            "score": 30,
+            "source": "rfc5737"
+        }
+    ],
+    "single_ips": [
+        {
+            "ip": "45.33.32.156",
+            "name": "scanme.nmap.org (Test target)",
+            "score": 0,
+            "source": "nmap.org"
+        }
+    ],
+    "contributing": "Submit new ranges via GitHub Issues with evidence"
+}

@@ -49,11 +49,15 @@ class ScannerUI:
             console=self.console
         )
 
-    def display_results(self, target_ip, duration, results, final_os, closed_count, filtered_count):
+    def display_results(self, target_ip, duration, results, final_os, closed_count, filtered_count, honeypot_result=None):
         """
         Displays the results in a Rich table.
         """
         self.console.print("\n")
+        
+        # Honeypot Detection Warning
+        if honeypot_result:
+            self._display_honeypot_warning(honeypot_result)
         
         # Table of Open Ports
         table = Table(title=f"Scan Results for {target_ip} (OS: {final_os})", show_header=True, header_style="bold magenta")
@@ -91,6 +95,41 @@ class ScannerUI:
             self.console.print(f"[dim]Not shown: {closed_count} closed, {filtered_count} filtered ports[/dim]")
         
         self.console.print(f"[bold]Aggregated OS Detection: {final_os}[/bold]")
+    
+    def _display_honeypot_warning(self, honeypot_result):
+        """
+        Display honeypot detection results with color-coded warning.
+        """
+        score = honeypot_result.score
+        confidence = honeypot_result.confidence
+        breakdown = honeypot_result.breakdown
+        
+        # Color based on score
+        if score >= 60:
+            border_style = "bold red"
+            icon = "⚠️ "
+            score_style = "bold red"
+        elif score >= 40:
+            border_style = "yellow"
+            icon = "⚡ "
+            score_style = "bold yellow"
+        else:
+            border_style = "green"
+            icon = "✓ "
+            score_style = "bold green"
+        
+        # Build breakdown text
+        lines = [f"{icon}[{score_style}]Honeypot Score: {score}/100 ({confidence})[/{score_style}]"]
+        
+        for check_name, data in breakdown.items():
+            check_score = data.get('score', 0)
+            max_score = data.get('max', 0)
+            reason = data.get('reason', '')
+            name_display = check_name.replace('_', ' ').title()
+            lines.append(f"  • {name_display}: {check_score}/{max_score} - {reason}")
+        
+        panel_content = "\n".join(lines)
+        self.console.print(Panel(panel_content, title="Honeypot Detection", border_style=border_style))
         
     def show_message(self, msg, style="bold red"):
         self.console.print(f"[{style}]{msg}[/{style}]")

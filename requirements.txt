@@ -1,2 +1,3 @@
-rich
-pydantic
+# Argus Dependencies
+rich>=13.0.0
+pydantic>=2.0.0

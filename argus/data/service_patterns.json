@@ -1,0 +1,89 @@
+{
+    "description": "Suspicious service combinations that indicate potential honeypots or misconfiguration",
+    "version": "1.0.0",
+    "last_updated": "2026-01-16",
+    "suspicious_combos": [
+        {
+            "name": "Linux SSH + Windows IIS",
+            "requires": [
+                "SSH",
+                "IIS"
+            ],
+            "score": 35,
+            "reason": "SSH (Linux) and IIS (Windows) indicate OS mismatch"
+        },
+        {
+            "name": "MySQL + MSSQL on same host",
+            "requires": [
+                "MySQL",
+                "MSSQL"
+            ],
+            "score": 40,
+            "reason": "Competing database servers rarely run together"
+        },
+        {
+            "name": "Multiple unrelated databases",
+            "requires": [
+                "MySQL",
+                "PostgreSQL",
+                "MongoDB"
+            ],
+            "min_match": 2,
+            "score": 25,
+            "reason": "Multiple different databases is unusual"
+        },
+        {
+            "name": "Too many admin services",
+            "requires": [
+                "SSH",
+                "RDP",
+                "Telnet",
+                "VNC"
+            ],
+            "min_match": 3,
+            "score": 30,
+            "reason": "Multiple remote access protocols is suspicious"
+        },
+        {
+            "name": "Web + FTP + SMTP + MySQL",
+            "requires": [
+                "HTTP",
+                "FTP",
+                "SMTP",
+                "MySQL"
+            ],
+            "min_match": 4,
+            "score": 20,
+            "reason": "Full stack on single IP could be honeypot"
+        }
+    ],
+    "normal_combos": [
+        {
+            "name": "Standard web stack",
+            "services": [
+                "HTTP",
+                "HTTPS"
+            ],
+            "note": "Normal web server"
+        },
+        {
+            "name": "LAMP/LEMP stack",
+            "services": [
+                "HTTP",
+                "HTTPS",
+                "MySQL"
+            ],
+            "note": "Common web application server"
+        },
+        {
+            "name": "Mail server",
+            "services": [
+                "SMTP",
+                "IMAP",
+                "POP3"
+            ],
+            "note": "Standard mail server setup"
+        }
+    ],
+    "contributing": "Submit patterns via GitHub Issues"
+}

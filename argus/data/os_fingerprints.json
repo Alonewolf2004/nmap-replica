@@ -1,0 +1,139 @@
+{
+    "description": "OS fingerprints based on service banners and behavior",
+    "version": "1.0.0",
+    "last_updated": "2026-01-16",
+    "fingerprints": [
+        {
+            "os": "Ubuntu Linux",
+            "patterns": [
+                "ubuntu",
+                "Ubuntu",
+                "deb",
+                "Debian"
+            ],
+            "services": {
+                "SSH": [
+                    "OpenSSH.*Ubuntu"
+                ],
+                "HTTP": [
+                    "Apache.*Ubuntu",
+                    "nginx.*ubuntu"
+                ]
+            }
+        },
+        {
+            "os": "Debian Linux",
+            "patterns": [
+                "debian",
+                "Debian"
+            ],
+            "services": {
+                "SSH": [
+                    "OpenSSH.*Debian"
+                ],
+                "HTTP": [
+                    "Apache.*Debian"
+                ]
+            }
+        },
+        {
+            "os": "CentOS/RHEL",
+            "patterns": [
+                "centos",
+                "rhel",
+                "Red Hat",
+                "el6",
+                "el7",
+                "el8",
+                "el9"
+            ],
+            "services": {
+                "SSH": [
+                    "OpenSSH.*centos",
+                    "OpenSSH.*el[0-9]"
+                ]
+            }
+        },
+        {
+            "os": "Windows Server",
+            "patterns": [
+                "Windows",
+                "Microsoft",
+                "Win32",
+                "Win64",
+                "IIS"
+            ],
+            "services": {
+                "HTTP": [
+                    "Microsoft-IIS",
+                    "Microsoft-HTTPAPI"
+                ],
+                "RDP": [
+                    "Remote Desktop"
+                ],
+                "SMB": [
+                    "Windows",
+                    "Samba"
+                ]
+            }
+        },
+        {
+            "os": "FreeBSD",
+            "patterns": [
+                "FreeBSD",
+                "freebsd"
+            ],
+            "services": {
+                "SSH": [
+                    "OpenSSH.*FreeBSD"
+                ]
+            }
+        },
+        {
+            "os": "macOS",
+            "patterns": [
+                "Darwin",
+                "macOS",
+                "OSX"
+            ],
+            "services": {}
+        }
+    ],
+    "service_indicators": {
+        "nginx": {
+            "likely_os": [
+                "Linux"
+            ],
+            "confidence": 0.6
+        },
+        "Apache": {
+            "likely_os": [
+                "Linux",
+                "Windows"
+            ],
+            "confidence": 0.5
+        },
+        "IIS": {
+            "likely_os": [
+                "Windows Server"
+            ],
+            "confidence": 0.95
+        },
+        "OpenSSH": {
+            "likely_os": [
+                "Linux",
+                "BSD",
+                "macOS"
+            ],
+            "confidence": 0.7
+        },
+        "Dropbear": {
+            "likely_os": [
+                "Linux",
+                "Embedded"
+            ],
+            "confidence": 0.8
+        }
+    },
+    "contributing": "Submit fingerprints via GitHub Issues"
+}

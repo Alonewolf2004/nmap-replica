@@ -7,10 +7,12 @@ class ScanConfig(BaseModel):
     Enforces strict types and safe ranges before execution.
     """
     target_ip: str
+    hostname: Optional[str] = None  # Original hostname for SNI
     ports: List[int] = Field(..., min_items=1)
     timeout: float = Field(1.5, gt=0, le=10.0)
     concurrency: int = Field(500, ge=1, le=5000)
     output_file: Optional[str] = None
+    deep_scan: bool = False  # Enable -sV deep service detection
 
     @validator('ports')
     def validate_ports(cls, v):

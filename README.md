@@ -1,4 +1,4 @@
-# Argus – The All-Seeing Port Scanner
+# Argus – The All-Seeing Port Scan
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python" alt="Python 3.10+">
